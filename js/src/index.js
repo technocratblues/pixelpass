@@ -23,6 +23,7 @@ const {
   replaceKeysAtDepth,
   replaceValuesForClaim169,
   decodeFromBase64UrlFormat,
+  decompressData,
 } = require("./utils/cborUtils.js");
 const { toMapWithKeyAndValueMapper } = require("./utils/mapperUtils.js");
 
@@ -80,7 +81,7 @@ function decode(data) {
   const decodedBase45Data = b45.decode(data);
   // Base45 returns number[], convert it
   const binaryData = Uint8Array.from(decodedBase45Data);
-  const decompressedData = pako.inflate(binaryData);
+  const decompressedData = decompressData(binaryData);
   const textData = new TextDecoder().decode(decompressedData);
   try {
     const decodedCBORData = cbor.decodeFirstSync(decompressedData);
