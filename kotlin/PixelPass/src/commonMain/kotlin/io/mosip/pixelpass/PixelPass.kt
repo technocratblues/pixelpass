@@ -4,16 +4,18 @@ import co.nstant.`in`.cbor.CborDecoder
 import co.nstant.`in`.cbor.CborEncoder
 import io.mosip.pixelpass.cbor.Utils
 import io.mosip.pixelpass.common.decodeFromBase64UrlFormat
+import io.mosip.pixelpass.compressor.Compressor
 import io.mosip.pixelpass.exception.UnknownBinaryFileTypeException
+import io.mosip.pixelpass.factory.CompressorFactory
 import io.mosip.pixelpass.shared.CLAIM_169_KEY_MAPPER
 import io.mosip.pixelpass.shared.CLAIM_169_REVERSE_KEY_MAPPER
 import io.mosip.pixelpass.shared.CLAIM_169_VALUE_MAPPER
+import io.mosip.pixelpass.shared.CompressionType
 import io.mosip.pixelpass.shared.DEFAULT_ZIP_FILE_NAME
 import io.mosip.pixelpass.shared.ZIP_HEADER
 import io.mosip.pixelpass.shared.decodeHex
 import io.mosip.pixelpass.types.ECC
 import io.mosip.pixelpass.utils.toMapWithKeyAndValueMapper
-import io.mosip.pixelpass.zlib.ZLib
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -34,15 +36,32 @@ class PixelPass {
     return Utils().toJson(cbor)
   }
 
-  fun generateQRCode(data: String, ecc: ECC = ECC.L, header: String = ""): String {
-    val dataWithHeader = generateQRData(data, header)
+  @JvmOverloads
+  fun generateQRCode(data: String, ecc: ECC = ECC.L, header: String = "", compressorType: String = "zlib"): String {
+    val dataWithHeader = generateQRData(data, header, compressorType)
     val qrcodeImage = convertQRDataIntoBase64(dataWithHeader, ecc)
     return qrcodeImage
   }
 
+  fun isDataZlibEncoded(data: ByteArray): Boolean
+  {
+    if(data.size < 2)return false
+    val cmf = data[0].toInt() and 0xFF
+    val flg = data[1].toInt() and 0xFF
+    val isZlib = (cmf and 0x0F) == 8 && (cmf shr 4) <= 7 && (((cmf shl 8) or flg) % 31 == 0)
+    return isZlib
+  }
+
   fun decode(data: String): String {
     val decodedBase45Data = Base45.getDecoder().decode(data)
-    val decompressedData = ZLib().decode(decodedBase45Data)
+    val compressor =
+      if (isDataZlibEncoded(decodedBase45Data)) {
+        CompressorFactory.create(CompressionType.ZLIB)
+      } else {
+        CompressorFactory.create(CompressionType.BROTLI)
+      }
+
+    val decompressedData = compressor.decode(decodedBase45Data)
     return try {
       val cborDecodedData = CborDecoder(ByteArrayInputStream(decompressedData)).decode()[0]
 
@@ -75,11 +94,12 @@ class PixelPass {
     }
     throw UnknownBinaryFileTypeException()
   }
-
-  fun generateQRData(data: String, header: String = ""): String {
+  @JvmOverloads
+  fun generateQRData(data: String, header: String = "", compressorType: String = "zlib"): String {
     val parsedData: Any?
     var compressedData = byteArrayOf()
     val b45EncodedData: String
+    val compressor = CompressorFactory.create(CompressionType.fromString(compressorType))
     try {
       parsedData =
         if (data.startsWith('[') && data.endsWith(']')) {
@@ -91,10 +111,10 @@ class PixelPass {
 
       val cborByteArrayOutputStream = ByteArrayOutputStream()
       CborEncoder(cborByteArrayOutputStream).nonCanonical().encode(toDataItem)
-      compressedData = ZLib().encode(cborByteArrayOutputStream.toByteArray())
+      compressedData = compressor.encode(cborByteArrayOutputStream.toByteArray())
     } catch (e: Exception) {
       logger.severe(e.toString())
-      compressedData = ZLib().encode(data.toByteArray())
+      compressedData = compressor.encode(data.toByteArray())
     } finally {
       b45EncodedData = String(Base45.getEncoder().encode(compressedData))
     }
